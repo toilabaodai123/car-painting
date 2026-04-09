@@ -51,9 +51,11 @@ async function initDB() {
                     username VARCHAR(50) UNIQUE NOT NULL,
                     password VARCHAR(255) NOT NULL,
                     user_id INTEGER NOT NULL UNIQUE,
-                    role VARCHAR(50) DEFAULT 'USER'
+                    role VARCHAR(50) DEFAULT 'USER',
+                    mfa_enabled BOOLEAN DEFAULT false
                 );
             `);
+            await pool.query('ALTER TABLE credentials ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT false;').catch(() => {});
             
             // Clients Table for OAuth2 Client Verification
             await pool.query(`
@@ -103,7 +105,7 @@ const extractClientCredentials = (req) => {
 
 // SECURE REGISTRATION FLOW
 app.post('/oauth/register', async (req, res) => {
-    const { username, password, name, email } = req.body;
+    const { username, password, name, email, mfa_enabled } = req.body;
     
     if (!username || !password || !name || !email) {
         return res.status(400).json({ error: 'missing_fields' });
@@ -115,11 +117,11 @@ app.post('/oauth/register', async (req, res) => {
 
         // 2. Insert into IDP credentials DB and act as the ID generator
         const insertQuery = `
-            INSERT INTO credentials (username, password, user_id, role) 
-            VALUES ($1, $2, COALESCE((SELECT MAX(user_id) FROM credentials), 0) + 1, 'USER') 
+            INSERT INTO credentials (username, password, user_id, role, mfa_enabled) 
+            VALUES ($1, $2, COALESCE((SELECT MAX(user_id) FROM credentials), 0) + 1, 'USER', $3) 
             RETURNING user_id;
         `;
-        const result = await pool.query(insertQuery, [username, hashedPassword]);
+        const result = await pool.query(insertQuery, [username, hashedPassword, !!mfa_enabled]);
         const newUserId = result.rows[0].user_id;
 
         // 3. Emit Kafka Event to trigger actual User Service Profile creation locally
@@ -170,7 +172,7 @@ app.post('/oauth/token', async (req, res) => {
   // 2. Grant Type: Password
   if (grant_type === 'password') {
       try {
-        const result = await pool.query('SELECT user_id, username, password as hashed_password, role FROM credentials WHERE username = $1', [username]);
+        const result = await pool.query('SELECT user_id, username, password as hashed_password, role, mfa_enabled FROM credentials WHERE username = $1', [username]);
         const creds = result.rows[0];
 
         if (!creds) {
@@ -181,6 +183,21 @@ app.post('/oauth/token', async (req, res) => {
         const isMatch = await bcrypt.compare(password, creds.hashed_password).catch(() => false);
         if (!isMatch && creds.hashed_password !== password) {
             return res.status(400).json({ error: 'invalid_grant' });
+        }
+
+        // MFA Intercept 
+        if (creds.mfa_enabled) {
+            const otp = Math.floor(100000 + Math.random() * 900000).toString();
+            const mfa_token = crypto.randomUUID();
+            const mfaPayload = JSON.stringify({ user_id: creds.user_id, username: creds.username, role: creds.role, otp });
+            
+            await redis.setex(`mfa:${mfa_token}`, 300, mfaPayload); /* 5 minutes */
+            
+            console.log(`\n========================================`);
+            console.log(`[MFA] OTP for ${creds.username}: ${otp}`);
+            console.log(`========================================\n`);
+
+            return res.status(202).json({ mfa_required: true, mfa_token });
         }
 
         const jti = crypto.randomUUID();
@@ -250,9 +267,100 @@ app.post('/oauth/token', async (req, res) => {
       }
   } 
   
+  // 4. Grant Type: Custom MFA
+  else if (grant_type === 'mfa') {
+      const { mfa_token, code } = req.body;
+      if (!mfa_token || !code) {
+          return res.status(400).json({ error: 'invalid_request', error_description: 'Missing mfa_token or code' });
+      }
+
+      try {
+          const raw = await redis.get(`mfa:${mfa_token}`);
+          if (!raw) {
+              return res.status(400).json({ error: 'invalid_grant', error_description: 'Invalid or expired MFA token' });
+          }
+
+          const payload = JSON.parse(raw);
+          if (payload.otp !== code) {
+              return res.status(401).json({ error: 'invalid_grant', error_description: 'Incorrect OTP code' });
+          }
+
+          // OTP valid! Consume it.
+          await redis.del(`mfa:${mfa_token}`);
+
+          const jti = crypto.randomUUID();
+          const access_token = jwt.sign(
+            { sub: payload.user_id, username: payload.username, role: payload.role, jti },
+            JWT_SECRET,
+            { expiresIn: '1h' }
+          );
+
+          const newRefreshToken = crypto.randomBytes(40).toString('hex');
+          const rtPayload = JSON.stringify({ user_id: payload.user_id, username: payload.username, role: payload.role });
+          await redis.setex(`refreshtoken:${newRefreshToken}`, 30 * 24 * 60 * 60, rtPayload);
+
+          return res.json({
+            access_token,
+            token_type: 'Bearer',
+            expires_in: 3600,
+            refresh_token: newRefreshToken
+          });
+
+      } catch (err) {
+          console.error('MFA Grant error', err);
+          return res.status(500).json({ error: 'server_error' });
+      }
+  }
+  
   else {
     return res.status(400).json({ error: 'unsupported_grant_type' });
   }
+});
+
+// FORGOT PASSWORD
+app.post('/oauth/password/forgot', async (req, res) => {
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: 'missing_username' });
+
+    try {
+        const result = await pool.query('SELECT user_id, username FROM credentials WHERE username = $1', [username]);
+        if (result.rows.length > 0) {
+            const creds = result.rows[0];
+            const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+            await redis.setex(`reset:${username}`, 900, resetCode); // 15 mins
+
+            console.log(`\n========================================`);
+            console.log(`[RESET] Code for ${username}: ${resetCode}`);
+            console.log(`========================================\n`);
+        }
+        // Always return 200 to prevent enumeration
+        return res.json({ message: 'If the username exists, a reset code was generated.' });
+    } catch (e) {
+        console.error('Forgot password error', e);
+        return res.status(500).json({ error: 'server_error' });
+    }
+});
+
+// RESET PASSWORD
+app.post('/oauth/password/reset', async (req, res) => {
+    const { username, code, new_password } = req.body;
+    if (!username || !code || !new_password) return res.status(400).json({ error: 'missing_fields' });
+
+    try {
+        const storedCode = await redis.get(`reset:${username}`);
+        if (!storedCode || storedCode !== code) {
+            return res.status(400).json({ error: 'invalid_code' });
+        }
+
+        const hashedPassword = await bcrypt.hash(new_password, 10);
+        await pool.query('UPDATE credentials SET password = $1 WHERE username = $2', [hashedPassword, username]);
+        await redis.del(`reset:${username}`);
+
+        return res.json({ message: 'Password has been reset successfully.' });
+    } catch (e) {
+        console.error('Reset password error', e);
+        return res.status(500).json({ error: 'server_error' });
+    }
 });
 
 // LOGOUT — Revoke Access Token and Refresh Token

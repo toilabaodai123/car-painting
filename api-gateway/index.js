@@ -124,6 +124,8 @@ async function seedDefaultRoutes() {
         { name: 'Export Orders', method: 'GET', path: '/exports/orders', kafka_topic: 'export-service-topic', kafka_uri: '/exports/orders', auth_required: true, authz_required: true },
         { name: 'Logout', method: 'POST', path: '/auth/logout', upstream_url: 'http://idp-service:3001/oauth/revoke', auth_required: true, authz_required: false },
         { name: 'Register', method: 'POST', path: '/auth/register', upstream_url: 'http://idp-service:3001/oauth/register', auth_required: false, authz_required: false },
+        { name: 'Forgot Password', method: 'POST', path: '/auth/forgot', upstream_url: 'http://idp-service:3001/oauth/password/forgot', auth_required: false, authz_required: false },
+        { name: 'Reset Password', method: 'POST', path: '/auth/reset', upstream_url: 'http://idp-service:3001/oauth/password/reset', auth_required: false, authz_required: false },
     ];
 
     for (const route of defaults) {

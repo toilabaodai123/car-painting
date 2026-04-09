@@ -15,6 +15,14 @@ function App() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [registerName, setRegisterName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
+  const [isMfaStep, setIsMfaStep] = useState(false);
+  const [mfaToken, setMfaToken] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [registerMfaEnabled, setRegisterMfaEnabled] = useState(false);
+  const [isForgotStep, setIsForgotStep] = useState(false);
+  const [isResetStep, setIsResetStep] = useState(false);
+  const [resetCode, setResetCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
 
   // Order tracking state
   const [currentOrder, setCurrentOrder] = useState(null); // { orderId, status, checkoutUrl }
@@ -93,6 +101,11 @@ function App() {
         })
       });
       const data = await res.json();
+      if (res.status === 202 && data.mfa_required) {
+        setIsMfaStep(true);
+        setMfaToken(data.mfa_token);
+        return;
+      }
       if (!res.ok) {
         setLoginError(data.error || 'Login failed');
         return;
@@ -118,7 +131,8 @@ function App() {
           username, 
           password,
           name: registerName,
-          email: registerEmail
+          email: registerEmail,
+          mfa_enabled: registerMfaEnabled
         })
       });
       const data = await res.json();
@@ -128,6 +142,83 @@ function App() {
       }
       setIsRegistering(false);
       await handleLogin(e);
+    } catch (e) {
+      setLoginError('Server connection error.');
+    }
+  };
+
+  const handleMfaSubmit = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch('http://localhost:3001/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          grant_type: 'mfa', 
+          mfa_token: mfaToken,
+          code: mfaCode,
+          client_id: 'storefront-client',
+          client_secret: 'secret123'
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error_description || 'Invalid MFA code');
+        return;
+      }
+      setIsMfaStep(false);
+      setToken(data.access_token);
+      localStorage.setItem('token', data.access_token);
+      if (data.refresh_token) {
+        localStorage.setItem('refresh_token', data.refresh_token);
+      }
+    } catch (e) {
+      setLoginError('Server connection error.');
+    }
+  };
+
+  const handleForgot = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch('http://localhost:3000/auth/forgot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setLoginError(data.error || 'Failed to request reset');
+        return;
+      }
+      setIsForgotStep(false);
+      setIsResetStep(true);
+      setMessage('If the username exists, a reset code was sent. Check Docker logs.');
+    } catch (e) {
+      setLoginError('Server connection error.');
+    }
+  };
+
+  const handleReset = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch('http://localhost:3000/auth/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, code: resetCode, new_password: newPassword })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setLoginError(data.error || 'Failed to reset password');
+        return;
+      }
+      setIsResetStep(false);
+      setResetCode('');
+      setNewPassword('');
+      setPassword('');
+      setMessage('Password reset completely! Please log in now.');
     } catch (e) {
       setLoginError('Server connection error.');
     }
@@ -215,6 +306,20 @@ function App() {
       case 'REJECTED': return '❌';
       default: return '⏳';
     }
+  };
+
+  const startForgotFlow = () => {
+    setIsRegistering(false);
+    setIsForgotStep(true);
+    setLoginError('');
+    setMessage('');
+  };
+
+  const cancelForgotFlow = () => {
+    setIsForgotStep(false);
+    setIsResetStep(false);
+    setLoginError('');
+    setMessage('');
   };
 
   // Order tracking view
@@ -312,22 +417,79 @@ function App() {
 
         {!token ? (
           <div className="auth-container glass-panel">
-            <h2>{isRegistering ? 'Create Account' : 'Secure Sign In'}</h2>
+            <h2>
+              {isResetStep ? 'Verify & Reset Password' : 
+               isForgotStep ? 'Forgot Password' : 
+               isMfaStep ? 'Two-Factor Authentication' : 
+               isRegistering ? 'Create Account' : 'Secure Sign In'}
+            </h2>
             {loginError && <div className="error">{loginError}</div>}
-            <form onSubmit={isRegistering ? handleRegister : handleLogin}>
-              {isRegistering && (
-                <>
-                  <div className="form-group">
-                    <label>Full Name</label>
-                    <input type="text" value={registerName} onChange={e => setRegisterName(e.target.value)} required />
-                  </div>
-                  <div className="form-group">
-                    <label>Email</label>
-                    <input type="email" value={registerEmail} onChange={e => setRegisterEmail(e.target.value)} required />
-                  </div>
-                </>
-              )}
-              <div className="form-group">
+            
+            {isResetStep ? (
+              <form onSubmit={handleReset}>
+                 <p style={{ marginBottom: '1rem', color: '#ccc', textAlign: 'center', lineHeight: '1.4' }}>
+                  Please enter the reset code securely generated in the Docker logs.
+                </p>
+                <div className="form-group">
+                  <label>Reset Code</label>
+                  <input type="text" value={resetCode} onChange={e => setResetCode(e.target.value)} required placeholder="123456" />
+                </div>
+                <div className="form-group">
+                  <label>New Password</label>
+                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required />
+                </div>
+                <button type="submit" className="primary-btn full-width">Complete Reset</button>
+                <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+                  <button type="button" className="secondary-btn" onClick={cancelForgotFlow}>Cancel</button>
+                </div>
+              </form>
+            ) : isForgotStep ? (
+              <form onSubmit={handleForgot}>
+                <p style={{ marginBottom: '1rem', color: '#ccc', textAlign: 'center', lineHeight: '1.4' }}>
+                  Enter your exact username to initiate a password reset workflow.
+                </p>
+                <div className="form-group">
+                  <label>Username</label>
+                  <input type="text" value={username} onChange={e => setUsername(e.target.value)} required />
+                </div>
+                <button type="submit" className="primary-btn full-width">Send Reset Code</button>
+                <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+                  <button type="button" className="secondary-btn" onClick={cancelForgotFlow}>Cancel</button>
+                </div>
+              </form>
+            ) : isMfaStep ? (
+              <form onSubmit={handleMfaSubmit}>
+                <p style={{ marginBottom: '1rem', color: '#ccc', textAlign: 'center', lineHeight: '1.4' }}>
+                  An OTP has been generated for your account. Please check the Docker logs and enter it below.
+                </p>
+                <div className="form-group">
+                  <label>MFA Code</label>
+                  <input type="text" value={mfaCode} onChange={e => setMfaCode(e.target.value)} required placeholder="123456" />
+                </div>
+                <button type="submit" className="primary-btn full-width">Verify & Sign In</button>
+                <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+                  <button type="button" className="secondary-btn" onClick={() => setIsMfaStep(false)}>Cancel</button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={isRegistering ? handleRegister : handleLogin}>
+                {isRegistering && (
+                  <>
+                    <div className="form-group">
+                      <label>Full Name</label>
+                      <input type="text" value={registerName} onChange={e => setRegisterName(e.target.value)} required />
+                    </div>
+                    <div className="form-group">
+                      <label>Email</label>
+                      <input type="email" value={registerEmail} onChange={e => setRegisterEmail(e.target.value)} required />
+                    </div>
+                    <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <input type="checkbox" id="mfaCheck" checked={registerMfaEnabled} onChange={e => setRegisterMfaEnabled(e.target.checked)} style={{ width: 'auto' }} />
+                      <label htmlFor="mfaCheck" style={{ marginBottom: 0 }}>Enable Two-Factor Authentication</label>
+                    </div>
+                  </>
+                )}
+                <div className="form-group">
                 <label>Username</label>
                 <input type="text" value={username} onChange={e => setUsername(e.target.value)} required />
               </div>
@@ -339,11 +501,20 @@ function App() {
                 {isRegistering ? 'Sign Up' : 'Sign In'}
               </button>
             </form>
-            <div style={{ marginTop: '1rem', textAlign: 'center' }}>
-              <button className="secondary-btn" onClick={() => setIsRegistering(!isRegistering)}>
-                {isRegistering ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
-              </button>
-            </div>
+            )}
+            {!isMfaStep && !isForgotStep && !isResetStep && (
+              <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+                <button type="button" className="secondary-btn" onClick={() => setIsRegistering(!isRegistering)}>
+                  {isRegistering ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
+                </button>
+                <br/>
+                {!isRegistering && (
+                  <button type="button" className="secondary-btn" style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#aaa' }} onClick={startForgotFlow}>
+                    Forgot Password?
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="products-view">
