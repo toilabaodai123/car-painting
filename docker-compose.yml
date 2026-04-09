@@ -45,8 +45,6 @@ services:
     build:
       context: .
       dockerfile: user-service/Dockerfile
-    ports:
-      - "8082:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=dev
     depends_on:
@@ -61,6 +59,8 @@ services:
       POSTGRES_DB: userdb
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   postgres-idp:
     image: postgres:15-alpine
@@ -104,13 +104,20 @@ services:
     build:
       context: .
       dockerfile: product-service/Dockerfile
-    ports:
-      - "8085:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=dev
     depends_on:
       - kafka
       - postgres
+
+  postgres-routes:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: routedb
+    ports:
+      - "5434:5432"
 
   api-gateway:
     build:
@@ -121,9 +128,15 @@ services:
     environment:
       - NODE_ENV=development
       - REDIS_HOST=redis
+      - ROUTES_DB_HOST=postgres-routes
+      - ROUTES_DB_PORT=5432
+      - ROUTES_DB_NAME=routedb
+      - ROUTES_DB_USER=user
+      - ROUTES_DB_PASSWORD=password
     depends_on:
       - kafka
       - redis
+      - postgres-routes
 
   authz-service:
     build:
@@ -138,8 +151,6 @@ services:
     build:
       context: .
       dockerfile: order-service/Dockerfile
-    ports:
-      - "8086:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=dev
     depends_on:
@@ -184,7 +195,7 @@ services:
     ports:
       - "3002:3002"
     environment:
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_PLACEHOLDER}
       - STOREFRONT_URL=http://localhost:4001
     depends_on:
       - kafka
