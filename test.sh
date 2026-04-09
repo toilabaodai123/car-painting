@@ -1,1 +1,0 @@
-TOKEN=$(curl -s -X POST http://localhost:3001/oauth/token -H "Content-Type: application/json" -d '{"grant_type":"password","username":"Bob","password":"password123"}' | python3 -c "import sys, json; print(json.load(sys.stdin).get('access_token', ''))") && echo "TOKEN=$TOKEN" && curl -s -v http://localhost:3000/exports/orders -H "Authorization: Bearer $TOKEN"
