@@ -25,7 +25,7 @@ public class UserService {
     }
 
     public UserResponse createUser(CreateUserRequest request) {
-        User user = new User(request.name(), request.email());
+        User user = new User(request.id(), request.name(), request.email());
         User saved = repository.save(user);
         return UserResponse.from(saved);
     }

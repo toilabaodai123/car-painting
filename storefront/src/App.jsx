@@ -12,6 +12,9 @@ function App() {
   const [products, setProducts] = useState([]);
   const [loginError, setLoginError] = useState('');
   const [message, setMessage] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [registerName, setRegisterName] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
 
   // Order tracking state
   const [currentOrder, setCurrentOrder] = useState(null); // { orderId, status, checkoutUrl }
@@ -81,7 +84,13 @@ function App() {
       const res = await fetch('http://localhost:3001/oauth/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ grant_type: 'password', username, password })
+        body: JSON.stringify({ 
+          grant_type: 'password', 
+          username, 
+          password,
+          client_id: 'storefront-client',
+          client_secret: 'secret123'
+        })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -90,18 +99,52 @@ function App() {
       }
       setToken(data.access_token);
       localStorage.setItem('token', data.access_token);
+      if (data.refresh_token) {
+        localStorage.setItem('refresh_token', data.refresh_token);
+      }
     } catch (e) {
       setLoginError('Server connection error. Is IdP running?');
     }
   };
 
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch('http://localhost:3000/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          username, 
+          password,
+          name: registerName,
+          email: registerEmail
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || 'Registration failed');
+        return;
+      }
+      setIsRegistering(false);
+      await handleLogin(e);
+    } catch (e) {
+      setLoginError('Server connection error.');
+    }
+  };
+
   const handleLogout = async () => {
     // Revoke the token server-side (Redis blacklist)
+    const refreshToken = localStorage.getItem('refresh_token');
     if (token) {
       try {
         await fetch('http://localhost:3000/auth/logout', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ refresh_token: refreshToken })
         });
       } catch (e) {
         console.warn('Token revocation failed:', e.message);
@@ -110,6 +153,7 @@ function App() {
     setToken(null);
     setUserId(null);
     localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
     setCurrentOrder(null);
   };
 
@@ -268,9 +312,21 @@ function App() {
 
         {!token ? (
           <div className="auth-container glass-panel">
-            <h2>Secure Sign In</h2>
+            <h2>{isRegistering ? 'Create Account' : 'Secure Sign In'}</h2>
             {loginError && <div className="error">{loginError}</div>}
-            <form onSubmit={handleLogin}>
+            <form onSubmit={isRegistering ? handleRegister : handleLogin}>
+              {isRegistering && (
+                <>
+                  <div className="form-group">
+                    <label>Full Name</label>
+                    <input type="text" value={registerName} onChange={e => setRegisterName(e.target.value)} required />
+                  </div>
+                  <div className="form-group">
+                    <label>Email</label>
+                    <input type="email" value={registerEmail} onChange={e => setRegisterEmail(e.target.value)} required />
+                  </div>
+                </>
+              )}
               <div className="form-group">
                 <label>Username</label>
                 <input type="text" value={username} onChange={e => setUsername(e.target.value)} required />
@@ -279,8 +335,15 @@ function App() {
                 <label>Password</label>
                 <input type="password" value={password} onChange={e => setPassword(e.target.value)} required />
               </div>
-              <button type="submit" className="primary-btn full-width">Sign In</button>
+              <button type="submit" className="primary-btn full-width">
+                {isRegistering ? 'Sign Up' : 'Sign In'}
+              </button>
             </form>
+            <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+              <button className="secondary-btn" onClick={() => setIsRegistering(!isRegistering)}>
+                {isRegistering ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="products-view">

@@ -23,6 +23,16 @@ public class UserKafkaHandler {
         requestHandler.handle("/users", msg -> {
             return userService.getAllUsers();
         });
+
+        requestHandler.handle("/users/register", msg -> {
+            try {
+                com.example.demo.dto.CreateUserRequest request = 
+                    com.common.utils.JsonUtils.getMapper().convertValue(msg.getData(), com.example.demo.dto.CreateUserRequest.class);
+                return userService.createUser(request);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to decode CreateUserRequest", e);
+            }
+        });
     }
 
     @KafkaListener(topics = "user-service-topic", groupId = "user-service-group")

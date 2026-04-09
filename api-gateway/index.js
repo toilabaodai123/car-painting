@@ -75,6 +75,7 @@ const checkAccess = async (req, res, next) => {
     try {
         const authResponse = await axios.post('http://authz-service:3002/evaluate', {
             userId: req.user.sub,
+            role: req.user.role,
             method: req.method,
             path: req.originalUrl
         });
@@ -122,6 +123,7 @@ async function seedDefaultRoutes() {
         { name: 'List Orders', method: 'GET', path: '/orders', kafka_topic: 'order-service-topic', kafka_uri: '/orders', auth_required: true, authz_required: true },
         { name: 'Export Orders', method: 'GET', path: '/exports/orders', kafka_topic: 'export-service-topic', kafka_uri: '/exports/orders', auth_required: true, authz_required: true },
         { name: 'Logout', method: 'POST', path: '/auth/logout', upstream_url: 'http://idp-service:3001/oauth/revoke', auth_required: true, authz_required: false },
+        { name: 'Register', method: 'POST', path: '/auth/register', upstream_url: 'http://idp-service:3001/oauth/register', auth_required: false, authz_required: false },
     ];
 
     for (const route of defaults) {
@@ -336,7 +338,6 @@ async function start() {
 
             const created = result.rows[0];
             await publishRouteUpdate('route.created', created.id);
-            await loadRoutesFromDB();
 
             res.status(201).json({ data: created });
         } catch (err) {
@@ -374,7 +375,6 @@ async function start() {
 
             const updated = result.rows[0];
             await publishRouteUpdate('route.updated', updated.id);
-            await loadRoutesFromDB();
 
             res.json({ data: updated });
         } catch (err) {
@@ -392,7 +392,6 @@ async function start() {
             if (result.rows.length === 0) return res.status(404).json({ error: 'Route not found' });
 
             await publishRouteUpdate('route.deleted', req.params.id);
-            await loadRoutesFromDB();
 
             res.status(204).send();
         } catch (err) {

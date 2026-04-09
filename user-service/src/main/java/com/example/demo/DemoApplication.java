@@ -19,8 +19,8 @@ public class DemoApplication {
     public CommandLineRunner loadData(UserRepository repository) {
         return args -> {
             if (repository.count() == 0) {
-                repository.save(new User("Alice", "alice@ecommerce.com"));
-                repository.save(new User("Bob", "bob@ecommerce.com"));
+                repository.save(new User(1L, "Alice", "alice@ecommerce.com"));
+                repository.save(new User(2L, "Bob", "bob@ecommerce.com"));
                 System.out.println("Mock Users loaded into PostgreSQL!");
             }
         };
