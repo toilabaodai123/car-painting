@@ -1,0 +1,13 @@
+{
+  "name": "realtime-service",
+  "version": "1.0.0",
+  "description": "Real-time order status updates via Socket.IO",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "socket.io": "^4.8.1"
+  }
+}

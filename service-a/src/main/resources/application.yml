@@ -1,0 +1,12 @@
+spring:
+  main:
+    allow-circular-references: true
+  kafka:
+    bootstrap-servers: kafka:9092
+    consumer:
+      group-id: service-a-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer

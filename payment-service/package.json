@@ -1,0 +1,15 @@
+{
+  "name": "payment-service",
+  "version": "1.0.0",
+  "description": "Payment service with Stripe integration",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "common": "file:../common-js",
+    "kafkajs": "^2.2.4",
+    "stripe": "^17.7.0",
+    "uuid": "^13.0.0"
+  }
+}

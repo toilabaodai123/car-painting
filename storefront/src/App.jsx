@@ -1,0 +1,310 @@
+import { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
+import './index.css';
+
+const REALTIME_URL = 'http://localhost:3003';
+
+function App() {
+  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [userId, setUserId] = useState(null);
+  const [username, setUsername] = useState('Alice');
+  const [password, setPassword] = useState('password123');
+  const [products, setProducts] = useState([]);
+  const [loginError, setLoginError] = useState('');
+  const [message, setMessage] = useState('');
+
+  // Order tracking state
+  const [currentOrder, setCurrentOrder] = useState(null); // { orderId, status, checkoutUrl }
+  const socketRef = useRef(null);
+
+  // Parse JWT to get userId
+  useEffect(() => {
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        setUserId(payload.sub);
+      } catch (e) {
+        console.error('Failed to parse token', e);
+      }
+    }
+  }, [token]);
+
+  // Connect Socket.IO when we have a userId
+  useEffect(() => {
+    if (!userId) return;
+
+    const socket = io(REALTIME_URL, { transports: ['websocket', 'polling'] });
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('Socket.IO connected:', socket.id);
+      socket.emit('join', userId);
+    });
+
+    socket.on('order-status-update', (data) => {
+      console.log('Real-time status update:', data);
+      setCurrentOrder(prev => {
+        if (prev && prev.orderId === data.orderId) {
+          return { ...prev, status: data.status };
+        }
+        return prev;
+      });
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Socket.IO disconnected');
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [userId]);
+
+  const fetchProducts = async () => {
+    try {
+      const res = await fetch('http://localhost:3000/products');
+      const data = await res.json();
+      setProducts(data || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch('http://localhost:3001/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'password', username, password })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLoginError(data.error || 'Login failed');
+        return;
+      }
+      setToken(data.access_token);
+      localStorage.setItem('token', data.access_token);
+    } catch (e) {
+      setLoginError('Server connection error. Is IdP running?');
+    }
+  };
+
+  const handleLogout = async () => {
+    // Revoke the token server-side (Redis blacklist)
+    if (token) {
+      try {
+        await fetch('http://localhost:3000/auth/logout', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+      } catch (e) {
+        console.warn('Token revocation failed:', e.message);
+      }
+    }
+    setToken(null);
+    setUserId(null);
+    localStorage.removeItem('token');
+    setCurrentOrder(null);
+  };
+
+  const buyProduct = async (productId) => {
+    setMessage('');
+    try {
+      const res = await fetch('http://localhost:3000/orders', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ productId })
+      });
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        setLoginError('Session expired. Please login again.');
+        return;
+      }
+      if (!res.ok) {
+        setMessage('Purchase failed.');
+        return;
+      }
+      const data = await res.json();
+
+      // Set current order and navigate to order tracking view
+      setCurrentOrder({
+        orderId: data.orderId,
+        status: data.status || 'PENDING',
+        checkoutUrl: data.checkoutUrl
+      });
+
+      // Watch this specific order
+      if (socketRef.current) {
+        socketRef.current.emit('watch-order', data.orderId);
+      }
+
+      // Open Stripe checkout in a new tab
+      if (data.checkoutUrl) {
+        window.open(data.checkoutUrl, '_blank');
+      }
+
+    } catch (e) {
+      setMessage('Network error during purchase.');
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch(status) {
+      case 'PAID': return '#2ecc71';
+      case 'REJECTED': return '#e74c3c';
+      default: return '#f39c12';
+    }
+  };
+
+  const getStatusIcon = (status) => {
+    switch(status) {
+      case 'PAID': return '✅';
+      case 'REJECTED': return '❌';
+      default: return '⏳';
+    }
+  };
+
+  // Order tracking view
+  if (currentOrder) {
+    return (
+      <div className="storefront">
+        <header className="glass-header">
+          <div className="logo">Nexus<span>Customer</span></div>
+          <nav>
+            <button className="secondary-btn" onClick={() => setCurrentOrder(null)}>← Back to Shop</button>
+          </nav>
+        </header>
+
+        <main>
+          <div className="order-tracking glass-panel" style={{ maxWidth: '500px', margin: '5vh auto', padding: '2.5rem', textAlign: 'center' }}>
+            <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>
+              {getStatusIcon(currentOrder.status)}
+            </div>
+            <h2 style={{ marginBottom: '0.5rem' }}>Order #{currentOrder.orderId}</h2>
+            <div style={{
+              display: 'inline-block',
+              padding: '0.5rem 1.5rem',
+              borderRadius: '20px',
+              fontWeight: 'bold',
+              fontSize: '1.1rem',
+              color: 'white',
+              background: getStatusColor(currentOrder.status),
+              marginBottom: '1.5rem'
+            }}>
+              {currentOrder.status}
+            </div>
+
+            {currentOrder.status === 'PENDING' && (
+              <div>
+                <p style={{ color: '#9094a6', marginBottom: '1.5rem' }}>
+                  Waiting for payment confirmation...<br/>
+                  <small>This page will update automatically when Stripe confirms your payment.</small>
+                </p>
+                <div className="pulse-dot" style={{
+                  width: '12px', height: '12px', borderRadius: '50%',
+                  background: '#f39c12', margin: '0 auto 1rem',
+                  animation: 'pulse 1.5s ease-in-out infinite'
+                }}></div>
+                {currentOrder.checkoutUrl && (
+                  <a href={currentOrder.checkoutUrl} target="_blank" rel="noopener noreferrer" 
+                     className="primary-btn" style={{ display: 'inline-block', textDecoration: 'none', marginTop: '1rem' }}>
+                    Complete Payment on Stripe →
+                  </a>
+                )}
+              </div>
+            )}
+
+            {currentOrder.status === 'PAID' && (
+              <div>
+                <p style={{ color: '#2ecc71', fontWeight: 'bold', marginBottom: '1rem' }}>
+                  Payment confirmed! Your order is complete.
+                </p>
+                <button className="primary-btn" onClick={() => setCurrentOrder(null)}>
+                  Continue Shopping
+                </button>
+              </div>
+            )}
+
+            {currentOrder.status === 'REJECTED' && (
+              <div>
+                <p style={{ color: '#e74c3c', marginBottom: '1rem' }}>
+                  Payment was declined or cancelled.
+                </p>
+                <button className="primary-btn" onClick={() => setCurrentOrder(null)}>
+                  Try Again
+                </button>
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="storefront">
+      <header className="glass-header">
+        <div className="logo">Nexus<span>Customer</span></div>
+        <nav>
+          {token ? (
+            <button className="secondary-btn" onClick={handleLogout}>Sign Out</button>
+          ) : (
+            <span>Welcome Guest</span>
+          )}
+        </nav>
+      </header>
+
+      <main>
+        {message && <div className="toast">{message}</div>}
+
+        {!token ? (
+          <div className="auth-container glass-panel">
+            <h2>Secure Sign In</h2>
+            {loginError && <div className="error">{loginError}</div>}
+            <form onSubmit={handleLogin}>
+              <div className="form-group">
+                <label>Username</label>
+                <input type="text" value={username} onChange={e => setUsername(e.target.value)} required />
+              </div>
+              <div className="form-group">
+                <label>Password</label>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+              </div>
+              <button type="submit" className="primary-btn full-width">Sign In</button>
+            </form>
+          </div>
+        ) : (
+          <div className="products-view">
+            <div className="welcome-banner glass-panel">
+              <h1>Available Products</h1>
+              <p>Browse and purchase securely using your digital identity.</p>
+            </div>
+            
+            <div className="products-grid">
+              {products.map(p => (
+                <div key={p.id} className="product-card glass-panel">
+                  <div className="product-image">📦</div>
+                  <h3>{p.name}</h3>
+                  <div className="price">${p.price}</div>
+                  <button onClick={() => buyProduct(p.id)} className="primary-btn">Buy Now</button>
+                </div>
+              ))}
+              {products.length === 0 && <p>No products loaded.</p>}
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+export default App;
