@@ -37,13 +37,14 @@ class KafkaClient {
         }
     }
 
-    async sendRequest(topic, uri, data) {
+    async sendRequest(topic, uri, data, headers = {}) {
         await this.connect();
 
         const ctxTxnId = MessageContextHolder.getTransactionId();
         const txnId = ctxTxnId ? ctxTxnId : randomUUID();
 
         const msg = Message.newRequest(uri, this.config.clusterId, txnId, this.config.responseTopic(), data);
+        msg.headers = headers;
         
         return new Promise(async (resolve, reject) => {
             const timeoutId = setTimeout(() => {

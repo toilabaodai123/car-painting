@@ -31,7 +31,8 @@ type Message struct {
 	Timestamp           *int64               `json:"timestamp,omitempty"`
 	Stream              *bool                `json:"stream,omitempty"`
 	StreamState         *string              `json:"streamState,omitempty"`
-	StreamIndex         *int                 `json:"streamIndex,omitempty"`
+	TargetFile          *string              `json:"targetFile,omitempty"`
+	Headers             map[string]string    `json:"headers,omitempty"`
 }
 
 func nowMillis() int64 {

@@ -76,6 +76,31 @@ func (c *Client) SendRequest(ctx context.Context, topic, uri string, data any) (
 	}
 }
 
+func (c *Client) SendRequestWithHeaders(ctx context.Context, topic, uri string, data any, headers map[string]string) (*message.Response, error) {
+	txnID := TransactionIDFrom(ctx)
+	if txnID == "" {
+		txnID = uuid.New().String()
+	}
+
+	msg := message.NewRequest(uri, c.config.ClusterID, txnID, c.config.responseTopic(), data)
+	msg.Headers = headers
+
+	ch := make(chan *message.Message, 1)
+	c.pending.Store(msg.MessageID, ch)
+	defer c.pending.Delete(msg.MessageID)
+
+	if err := c.producer.Send(ctx, topic, msg); err != nil {
+		return nil, fmt.Errorf("send request with headers: %w", err)
+	}
+
+	select {
+	case resp := <-ch:
+		return c.unwrapResponse(resp)
+	case <-ctx.Done():
+		return nil, errors.NewTimeout(topic + "/" + uri)
+	}
+}
+
 func (c *Client) SendMessage(ctx context.Context, topic, uri string, data any) error {
 	txnID := TransactionIDFrom(ctx)
 	if txnID == "" {

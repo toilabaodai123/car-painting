@@ -169,6 +169,35 @@ async function start() {
         }
     });
 
+    // USER/ADMIN: Request orders export (CSV) via Go microservice
+    app.get('/exports/orders', authenticateToken, checkAccess, async (req, res) => {
+        try {
+            // Forward headers so export-service can evaluate permissions
+            const headers = {
+                'X-User-Id': String(req.user.sub),
+                'X-User-Permissions': req.user.permissions?.join(',') || ''
+            };
+
+            const response = await kafkaClient.sendRequest('export-service-topic', '/exports/orders', null, headers);
+            
+            // The Go service returns a Presigned URL pointing to Minio (port 9000).
+            // E.g., http://minio:9000/exports/orders-export-123.csv?...
+            // We need to replace "minio:9000" with "localhost:9000" so the browser can reach it
+            let url = response.data.downloadUrl;
+            if (url) {
+                url = url.replace('http://minio:9000', 'http://localhost:9000');
+            }
+
+            res.json({
+                downloadUrl: url,
+                fileName: response.data.fileName
+            });
+        } catch (error) {
+            console.error("Error generating export:", error);
+            res.status(500).json({ error: 'Export failed: ' + error.message });
+        }
+    });
+
     // Proxy logout to IdP revoke endpoint
     app.post('/auth/logout', authenticateToken, async (req, res) => {
         try {
