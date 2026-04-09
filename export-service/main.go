@@ -70,8 +70,15 @@ func main() {
 	}
 	defer client.Close()
 
+	// 2.a Initialize separate client for Localhost Presigned URL generation
+	localMinioClient, _ := minio.New("localhost:9000", &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
+		Secure: false,
+		Region: "us-east-1", // Force region to avoid network location lookup!
+	})
+
 	// 3. Register Handler
-	handler := NewExportHandler(client, minioClient, bucketName)
+	handler := NewExportHandler(client, minioClient, localMinioClient, bucketName)
 	router := kafka.NewRouter()
 	router.Handle("/exports/orders", handler.HandleExportOrders)
 

@@ -18,13 +18,15 @@ import (
 type ExportHandler struct {
 	client      *kafka.Client
 	minioClient *minio.Client
+	localMinioClient *minio.Client
 	bucketName  string
 }
 
-func NewExportHandler(client *kafka.Client, minioClient *minio.Client, bucketName string) *ExportHandler {
+func NewExportHandler(client *kafka.Client, minioClient *minio.Client, localMinioClient *minio.Client, bucketName string) *ExportHandler {
 	return &ExportHandler{
 		client:      client,
 		minioClient: minioClient,
+		localMinioClient: localMinioClient,
 		bucketName:  bucketName,
 	}
 }
@@ -85,11 +87,11 @@ func (h *ExportHandler) HandleExportOrders(ctx context.Context, msg *message.Mes
 		return nil, fmt.Errorf("failed to upload to minio: %v", err)
 	}
 
-	// 5. Generate Presigned URL
+	// 5. Generate Presigned URL using local client!
 	reqParams := make(map[string][]string)
 	reqParams["response-content-disposition"] = []string{fmt.Sprintf("attachment; filename=\"%s\"", fileName)}
 
-	presignedURL, err := h.minioClient.PresignedGetObject(context.Background(), h.bucketName, fileName, time.Hour*1, reqParams)
+	presignedURL, err := h.localMinioClient.PresignedGetObject(context.Background(), h.bucketName, fileName, time.Hour*1, reqParams)
 	if err != nil {
 		log.Printf("Failed to generate presigned URL: %v", err)
 		return nil, fmt.Errorf("failed to generate presigned URL: %v", err)

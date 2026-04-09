@@ -4,8 +4,8 @@ import './index.css';
 function App() {
   const [data, setData] = useState({ orders: [], users: [], products: [] });
   const [token, setToken] = useState(localStorage.getItem('admin_token'));
-  const [username, setUsername] = useState('Bob');
-  const [password, setPassword] = useState('password123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -37,6 +37,32 @@ function App() {
       }
     }
   };
+  const handleExport = async () => {
+    if (!token) return;
+    setError(null);
+    try {
+      const res = await fetch('http://localhost:3000/exports/orders', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        if (res.status === 403) throw new Error('Access Denied. You do not have permission to export.');
+        throw new Error('Export failed to generate.');
+      }
+      const data = await res.json();
+      if (data.downloadUrl) {
+        const a = document.createElement('a');
+        a.href = data.downloadUrl;
+        a.download = data.fileName || 'orders-export.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
+    }
+  };
+
 
   useEffect(() => {
     fetchOrders();
@@ -167,7 +193,10 @@ function App() {
         <section className="unified-view glass-panel">
           <div className="section-header">
             <h2>Recent Transactions</h2>
-            <button className="primary-btn" onClick={fetchOrders}>Refresh Data</button>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button className="primary-btn" onClick={fetchOrders}>Refresh Data</button>
+              <button className="primary-btn" style={{ background: '#20c997' }} onClick={handleExport}>⬇ Export CSV</button>
+            </div>
           </div>
           
           <div className="table-responsive">

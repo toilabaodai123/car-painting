@@ -180,16 +180,8 @@ async function start() {
 
             const response = await kafkaClient.sendRequest('export-service-topic', '/exports/orders', null, headers);
             
-            // The Go service returns a Presigned URL pointing to Minio (port 9000).
-            // E.g., http://minio:9000/exports/orders-export-123.csv?...
-            // We need to replace "minio:9000" with "localhost:9000" so the browser can reach it
-            let url = response.data.downloadUrl;
-            if (url) {
-                url = url.replace('http://minio:9000', 'http://localhost:9000');
-            }
-
             res.json({
-                downloadUrl: url,
+                downloadUrl: response.data.downloadUrl,
                 fileName: response.data.fileName
             });
         } catch (error) {
